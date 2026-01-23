@@ -145,4 +145,24 @@ def process_invoice(file_path):
         "llm_check": llm_result(text)
     }
 
-    return result
+    final = llm.invoke(
+    f"""
+Return ONLY a JSON object matching this schema:
+
+{{
+  "invoice_number": "",
+  "vendor_name": "",
+  "invoice_date": "",
+  "total_amount": "",
+  "gst_number": "",
+  "pan_number": "",
+  "vendor_address": "",
+  "vendor_email": "",
+  "product_name": ""
+}}
+
+Extract the key invoice details from the following text in JSON format: {text}, from the {result} extract mainly from the llm_check json key and check its gst number,pan,invoice no from the other keys whether the keys are correct and  fetch these details only invoice number, vendor name, invoice date,  total amount, GST number, PAN number, vendor address, vendor email,product name, vendor name fetch these details alone know
+"""
+).content.strip()
+    
+    return final
