@@ -1,1 +1,6 @@
-Hi guys, Good Morning !!!!
+streamlit
+pytesseract
+pdfplumber
+Pillow
+python-dotenv
+langchain-groq
