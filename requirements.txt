@@ -1,1 +1,6 @@
-pandas
+streamlit
+pytesseract
+pdfplumber
+Pillow
+python-dotenv
+langchain-groq
