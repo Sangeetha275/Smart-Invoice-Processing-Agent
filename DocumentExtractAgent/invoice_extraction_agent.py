@@ -144,7 +144,7 @@ def process_invoice(file_path):
         "line_items": extract_line_items(text),
         "llm_check": llm_result(text)
     }
-
+    print(result)
     final = llm.invoke(
     f"""
 Return ONLY a JSON object matching this schema:
