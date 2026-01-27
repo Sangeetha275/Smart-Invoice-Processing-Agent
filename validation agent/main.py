@@ -11,7 +11,14 @@ if __name__ == "__main__":
     # -------------------- VALIDATE INVOICE --------------------
     result = validate_invoice_from_json(invoice_data)
 
-    # -------------------- PRINT RESULT --------------------
-    print("\nGST VALIDATION RESULT\n")
-    for k, v in result.items():
-        print(f"{k}: {v}")
+    # -------------------- PRINT JSON OUTPUT --------------------
+    print("\nGST VALIDATION RESULT (JSON)\n")
+    print(json.dumps(result, indent=4))
+
+    # -------------------- SAVE OUTPUT TO JSON FILE --------------------
+    with open("gst_validation_output.json", "w") as f:
+        json.dump(result, f, indent=4)
+
+    print("\n✅ Validation result saved to gst_validation_output.json\n")
+
+
