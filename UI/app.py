@@ -2,11 +2,12 @@ import streamlit as st
 import tempfile
 import os
 import json
+
 from DocumentExtractAgent.invoice_extraction_agent import process_invoice
+from DuplicateDetectionAgent.duplicate_detection_agent import DuplicateDetectionAgent
 
-st.set_page_config(page_title="AI Invoice Extractor", layout="centered")
-
-st.title("🧾 AI Invoice Extractor")
+st.set_page_config(page_title="AI Invoice Processor", layout="centered")
+st.title("🧾 AI Invoice Processor")
 
 uploaded_file = st.file_uploader(
     "Upload Invoice (PDF / Image / Text)",
@@ -14,36 +15,67 @@ uploaded_file = st.file_uploader(
 )
 
 if uploaded_file:
-    # Preserve original extension
+    # -------------------- SAVE FILE --------------------
     file_extension = os.path.splitext(uploaded_file.name)[1]
 
     with tempfile.NamedTemporaryFile(delete=False, suffix=file_extension) as tmp_file:
         tmp_file.write(uploaded_file.getbuffer())
         temp_path = tmp_file.name
 
-    with st.spinner("Processing invoice..."):
+    # -------------------- DOCUMENT EXTRACTION --------------------
+    with st.spinner("Extracting invoice data..."):
         result = process_invoice(temp_path)
 
-    # If result is string JSON, convert to dict safely
+    # Parse JSON safely
     if isinstance(result, str):
         try:
             result = json.loads(result)
         except Exception:
-            st.error("Failed to parse invoice output")
+            st.error("❌ Failed to parse extracted invoice data")
             st.stop()
 
-    st.subheader("📊 Extracted Invoice Data")
+    st.subheader("📄 Extracted Invoice Data")
 
-    # ✅ If vendor_email missing → ask user
+    # -------------------- VENDOR EMAIL (MANDATORY) --------------------
     if not result.get("vendor_email"):
-        st.warning("Vendor email not found in invoice. Please enter manually.")
+        st.warning("⚠️ Vendor email not found in invoice")
 
         manual_email = st.text_input(
-            "Enter Vendor Email",
+            "Enter Vendor Email (required)",
             placeholder="vendor@example.com"
         )
 
-        if manual_email:
-            result["vendor_email"] = manual_email
+        if not manual_email:
+            st.info("Please enter vendor email to continue")
+            st.stop()
+
+        result["vendor_email"] = manual_email
 
     st.json(result)
+
+    # -------------------- DUPLICATE DETECTION --------------------
+    st.subheader("🔍 Duplicate Check")
+
+    duplicate_agent = DuplicateDetectionAgent()
+
+    duplicate_result = duplicate_agent.check_duplicate({
+        "invoice_number": result.get("invoice_number"),
+        "vendor_name": result.get("vendor_name"),
+        "invoice_date": result.get("invoice_date"),
+        "total_amount": result.get("total_amount")
+    })
+
+    # -------------------- DUPLICATE RESULT UI --------------------
+    if duplicate_result["is_duplicate"]:
+        st.error(
+            f"🚨 DUPLICATE INVOICE ({duplicate_result['duplicate_type']})"
+        )
+        st.write(duplicate_result["message"])
+        st.write(f"Confidence: {duplicate_result['confidence']:.2f}")
+
+        st.info("⛔ Invoice processing stopped. Finance review required.")
+        st.stop()
+
+    else:
+        st.success("✅ No duplicate found. Invoice can proceed.")
+        st.write(f"Confidence: {duplicate_result['confidence']:.2f}")
