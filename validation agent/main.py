@@ -20,5 +20,3 @@ if __name__ == "__main__":
         json.dump(result, f, indent=4)
 
     print("\n✅ Validation result saved to gst_validation_output.json\n")
-
-
