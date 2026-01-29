@@ -28,19 +28,19 @@ SNOWFLAKE_CONFIG = {
     "password": "SudaroliNageswari@2004",
     "account": "kvuunyb-hp15737",
     "warehouse": "COMPUTE_WH",
-    "database": "MOCK_INVOICE_DB",
-    "schema": "PUBLIC",
+    "database": "SMART_INVOICE_DB",
+    "schema": "AP_INVOICES",
     "role": "ACCOUNTADMIN"
 }
 
-SNOWFLAKE_TABLE = "MOCK_INVOICE_DB.PUBLIC.INVOICE_TABLE"
+SNOWFLAKE_TABLE = "SMART_INVOICE_DB.AP_INVOICES.INVOICES"
 
 # ================= UTILS =================
 
 def parse_amount(value):
     cleaned = str(value).replace(",", "").replace("₹", "").strip()
     amount = float(cleaned)
-    if amount <= 0:
+    if amount < 0:
         raise ValueError("Invalid invoice amount")
     return amount
 
@@ -49,18 +49,9 @@ def clean_email_body(raw_body: str) -> str:
     soup = BeautifulSoup(raw_body, "html.parser")
     return soup.get_text("\n").upper().strip()
 
-# ================= SNOWFLAKE =================
+# ================= SNOWFLAKE UPSERT =================
 
-def upsert_invoice_snowflake(
-    invoice_number,
-    vendor_name,
-    vendor_email,
-    amount,
-    status,
-    token,
-    created_at,
-    updated_at
-):
+def upsert_invoice_snowflake(invoice, status):
     conn = snowflake.connector.connect(**SNOWFLAKE_CONFIG)
     cur = conn.cursor()
 
@@ -68,56 +59,64 @@ def upsert_invoice_snowflake(
         MERGE INTO {SNOWFLAKE_TABLE} t
         USING (
             SELECT
-                %s AS INVOICE_NUMBER,
-                %s AS VENDOR_NAME,
-                %s AS VENDOR_EMAIL,
-                %s AS AMOUNT,
-                %s AS STATUS,
-                %s AS APPROVAL_TOKEN,
-                %s AS CREATED_AT,
-                %s AS UPDATED_AT
+                %(invoice_number)s AS INVOICE_NUMBER,
+                %(vendor_name)s AS VENDOR_NAME,
+                %(invoice_date)s AS INVOICE_DATE,
+                %(total_amount)s AS TOTAL_AMOUNT,
+                %(gst_number)s AS GST_NUMBER,
+                %(pan_number)s AS PAN_NUMBER,
+                %(vendor_address)s AS VENDOR_ADDRESS,
+                %(vendor_email)s AS VENDOR_EMAIL,
+                %(product_name)s AS PRODUCT_NAME,
+                %(status)s AS STATUS
         ) s
         ON t.INVOICE_NUMBER = s.INVOICE_NUMBER
+           AND t.VENDOR_NAME = s.VENDOR_NAME
         WHEN MATCHED THEN UPDATE SET
-            STATUS = s.STATUS,
-            UPDATED_AT = s.UPDATED_AT
+            STATUS = s.STATUS
         WHEN NOT MATCHED THEN INSERT (
             INVOICE_NUMBER,
             VENDOR_NAME,
+            INVOICE_DATE,
+            TOTAL_AMOUNT,
+            GST_NUMBER,
+            PAN_NUMBER,
+            VENDOR_ADDRESS,
             VENDOR_EMAIL,
-            AMOUNT,
-            STATUS,
-            APPROVAL_TOKEN,
-            CREATED_AT,
-            UPDATED_AT
+            PRODUCT_NAME,
+            STATUS
         ) VALUES (
             s.INVOICE_NUMBER,
             s.VENDOR_NAME,
+            s.INVOICE_DATE,
+            s.TOTAL_AMOUNT,
+            s.GST_NUMBER,
+            s.PAN_NUMBER,
+            s.VENDOR_ADDRESS,
             s.VENDOR_EMAIL,
-            s.AMOUNT,
-            s.STATUS,
-            s.APPROVAL_TOKEN,
-            s.CREATED_AT,
-            s.UPDATED_AT
+            s.PRODUCT_NAME,
+            s.STATUS
         )
-    """, (
-        invoice_number,
-        vendor_name,
-        vendor_email,
-        amount,
-        status,
-        token,
-        created_at,
-        updated_at
-    ))
+    """, {
+        "invoice_number": invoice["invoice_number"],
+        "vendor_name": invoice["vendor_name"],
+        "invoice_date": invoice["invoice_date"],
+        "total_amount": parse_amount(invoice["total_amount"]),
+        "gst_number": invoice["gst_number"],
+        "pan_number": invoice["pan_number"],
+        "vendor_address": invoice["vendor_address"],
+        "vendor_email": invoice["vendor_email"],
+        "product_name": invoice["product_name"],
+        "status": status
+    })
 
     conn.commit()
     cur.close()
     conn.close()
 
-    print("📊 Snowflake updated")
+    print("📊 Snowflake upsert successful")
 
-# ================= EMAIL SEND (MANAGER) =================
+# ================= EMAIL TO MANAGER =================
 
 def send_manager_email(invoice, token):
     msg = EmailMessage()
@@ -133,10 +132,7 @@ Vendor         : {invoice['vendor_name']}
 Amount         : {invoice['total_amount']}
 
 Reply with ONLY ONE WORD in the FIRST LINE:
-
-APPROVED
-or
-REJECTED
+APPROVED or REJECTED
 
 Approval Token: {token}
 """)
@@ -146,9 +142,9 @@ Approval Token: {token}
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.send_message(msg)
 
-    print("📧 Approval email sent to manager")
+    print("📧 Manager approval email sent")
 
-# ================= EMAIL READ (MANAGER REPLY) =================
+# ================= READ MANAGER REPLY =================
 
 def check_manager_reply(token, invoice_number, wait_seconds=300):
     print("🔍 Waiting for manager reply...")
@@ -161,15 +157,12 @@ def check_manager_reply(token, invoice_number, wait_seconds=300):
             mail.select("INBOX")
 
             _, data = mail.search(None, "ALL")
-            mail_ids = data[0].split()
-
-            for mail_id in reversed(mail_ids[-20:]):
+            for mail_id in reversed(data[0].split()[-20:]):
                 _, msg_data = mail.fetch(mail_id, "(RFC822)")
                 msg = email.message_from_bytes(msg_data[0][1])
 
                 if parseaddr(msg.get("From"))[1].lower() != MANAGER_EMAIL.lower():
                     continue
-
                 if invoice_number not in msg.get("Subject", ""):
                     continue
 
@@ -182,16 +175,13 @@ def check_manager_reply(token, invoice_number, wait_seconds=300):
                     raw_body = msg.get_payload(decode=True).decode(errors="ignore")
 
                 body = clean_email_body(raw_body)
-                first_line = body.splitlines()[0]
-
                 if token not in body:
                     continue
 
                 mail.logout()
-
-                if first_line.startswith("APPROVED"):
+                if body.startswith("APPROVED"):
                     return "APPROVED"
-                if first_line.startswith("REJECTED"):
+                if body.startswith("REJECTED"):
                     return "REJECTED"
 
             mail.logout()
@@ -202,15 +192,9 @@ def check_manager_reply(token, invoice_number, wait_seconds=300):
 
     return None
 
-# ================= COMMUNICATION AGENT (HANDOFF ONLY) =================
+# ================= COMMUNICATION AGENT =================
 
 def communication_agent(vendor_name, vendor_email, invoice_number, status):
-    """
-    Communication Agent stub.
-    No email / API call yet.
-    Just receives the payload.
-    """
-
     payload = {
         "vendor_name": vendor_name,
         "vendor_email": vendor_email,
@@ -226,85 +210,53 @@ def communication_agent(vendor_name, vendor_email, invoice_number, status):
 
 def authorize_invoice(invoice):
     amount = parse_amount(invoice["total_amount"])
-    now = datetime.utcnow().isoformat()
-    vendor_name = invoice["vendor_name"]
 
     # ---------- AUTO APPROVAL ----------
     if amount < THRESHOLD:
         status = "APPROVED"
-        token = None
-
-        upsert_invoice_snowflake(
-            invoice["invoice_number"],
-            vendor_name,
-            invoice["vendor_email"],
-            amount,
-            status,
-            token,
-            now,
-            now
-        )
-
+        upsert_invoice_snowflake(invoice, status)
         communication_agent(
-            vendor_name,
+            invoice["vendor_name"],
             invoice["vendor_email"],
             invoice["invoice_number"],
             status
         )
-
-        print("✅ Auto-approved and handed to communication agent")
+        print("✅ Auto-approved")
         return
 
     # ---------- MANAGER APPROVAL ----------
     status = "PENDING"
     token = uuid.uuid4().hex.upper()
 
+    upsert_invoice_snowflake(invoice, status)
     send_manager_email(invoice, token)
 
-    upsert_invoice_snowflake(
-        invoice["invoice_number"],
-        vendor_name,
-        invoice["vendor_email"],
-        amount,
-        status,
-        token,
-        now,
-        now
-    )
-
     decision = check_manager_reply(token, invoice["invoice_number"])
-
     if decision:
-        updated_at = datetime.utcnow().isoformat()
-
-        upsert_invoice_snowflake(
-            invoice["invoice_number"],
-            vendor_name,
-            invoice["vendor_email"],
-            amount,
-            decision,
-            token,
-            now,
-            updated_at
-        )
-
+        upsert_invoice_snowflake(invoice, decision)
         communication_agent(
-            vendor_name,
+            invoice["vendor_name"],
             invoice["vendor_email"],
             invoice["invoice_number"],
             decision
         )
-
-        print(f"✅ Manager decision: {decision}")
+        print(f"✅ Manager decision received: {decision}")
+    else:
+        print("⚠️ No manager response (still PENDING)")
 
 # ================= TEST =================
 
 if __name__ == "__main__":
     test_invoice = {
-        "invoice_number": "AIN2526003612007",
-        "vendor_name": "PUMA",
-        "vendor_email": "kajasriperiasamy@gmail.com",
-        "total_amount": "89000"
+        "invoice_number": "AIN2526003610503",
+        "vendor_name": "Google Cloud Platform",
+        "invoice_date": "2026-01-27",
+        "total_amount": "67890",
+        "gst_number": "29AACCG0527D1Z0",
+        "pan_number": "AAJCAACCG0527DA9880A",
+        "vendor_address": "3, RMZ Infinity – Tower E, Old Madras Road, Sadanandanagar, Bennigana Halli, Bengaluru, Karnataka 560016, India.",
+        "vendor_email": "googlecloudplatform@gmail.com",
+        "product_name": "Google BigQuery"
     }
 
     authorize_invoice(test_invoice)
