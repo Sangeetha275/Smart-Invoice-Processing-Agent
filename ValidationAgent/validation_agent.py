@@ -1,5 +1,5 @@
-from gst_api import verify_gst_number
-from gst_calculations import calculate_gst_components
+from ValidationAgent.gst_api import verify_gst_number
+from ValidationAgent.gst_calculations import calculate_gst_components
 
 
 def validate_invoice_from_json(invoice: dict) -> dict:
