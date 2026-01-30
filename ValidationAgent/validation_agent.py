@@ -4,26 +4,40 @@ from ValidationAgent.gst_calculations import calculate_gst_components
 
 def validate_invoice_from_json(invoice: dict) -> dict:
     """
-    Validates invoice GST details using:
-    - Vendor GST vs Government API
-    - Vendor GST vs Invoice GST
-    - GST calculation vs actual total
+    Safely validates invoice GST details.
+    Handles GST API failures without crashing.
     """
 
-    # -------------------- EXTRACT FIELDS FROM JSON --------------------
-    vendor_gst = invoice["gst_number"]                 # GST entered by vendor
-    invoice_gst = invoice["gst_number"]                # GST extracted from invoice
-    invoice_amount_without_gst = float(invoice["amount_without_gst"])
-    gst_rate = float(invoice["gst_rate"])
-    actual_grand_total = float(invoice["total_amount"])
+    # -------------------- EXTRACT FIELDS --------------------
+    vendor_gst = invoice.get("gst_number", "").strip()
+    invoice_gst = invoice.get("gst_number", "").strip()
+    invoice_amount_without_gst = float(invoice.get("amount_without_gst", 0))
+    gst_rate = float(invoice.get("gst_rate", 18))
+    actual_grand_total = float(invoice.get("total_amount", 0))
     interstate = invoice.get("interstate", True)
 
-    # -------------------- GST API VERIFICATION --------------------
-    api_result = verify_gst_number(vendor_gst)
-    api_gst = api_result["result"]["source_output"]["gstin"]
+    # -------------------- GST API CALL --------------------
+    api_gst = None
+    api_error = None
 
-    # -------------------- GST MATCH CHECKS --------------------
-    vendor_vs_api = vendor_gst == api_gst
+    try:
+        api_result = verify_gst_number(vendor_gst)
+
+        # SAFE PARSING
+        if (
+            isinstance(api_result, dict)
+            and "result" in api_result
+            and "source_output" in api_result["result"]
+        ):
+            api_gst = api_result["result"]["source_output"].get("gstin")
+        else:
+            api_error = api_result.get("message", "GST verification failed")
+
+    except Exception as e:
+        api_error = str(e)
+
+    # -------------------- MATCH CHECKS --------------------
+    vendor_vs_api = api_gst is not None and vendor_gst == api_gst
     vendor_vs_invoice = vendor_gst == invoice_gst
 
     # -------------------- GST CALCULATION --------------------
@@ -36,8 +50,12 @@ def validate_invoice_from_json(invoice: dict) -> dict:
     expected_total = gst_calc["expected_grand_total"]
     difference = abs(expected_total - actual_grand_total)
 
-    # -------------------- FINAL VALIDATION STATUS --------------------
-    if not vendor_vs_api:
+    # -------------------- FINAL STATUS --------------------
+    if api_error:
+        status = "GST_API_ERROR"
+        message = f"GST verification failed: {api_error}"
+
+    elif not vendor_vs_api:
         status = "INVALID_VENDOR_GST"
         message = "Vendor GST is not valid as per government records"
 
@@ -56,7 +74,7 @@ def validate_invoice_from_json(invoice: dict) -> dict:
     # -------------------- CONFIDENCE SCORE --------------------
     confidence_score = 0
 
-    if vendor_vs_api:
+    if api_gst:
         confidence_score += 40
     if vendor_vs_invoice:
         confidence_score += 30
@@ -67,11 +85,11 @@ def validate_invoice_from_json(invoice: dict) -> dict:
 
     # -------------------- FINAL OUTPUT --------------------
     return {
-        "invoice_number": invoice["invoice_number"],
-        "vendor_name": invoice["vendor_name"],
-        "vendor_email": invoice["vendor_email"],
-        "vendor_address": invoice["vendor_address"],
-        "product_name": invoice["product_name"],
+        "invoice_number": invoice.get("invoice_number"),
+        "vendor_name": invoice.get("vendor_name"),
+        "vendor_email": invoice.get("vendor_email"),
+        "vendor_address": invoice.get("vendor_address"),
+        "product_name": invoice.get("product_name"),
 
         "vendor_gst": vendor_gst,
         "invoice_gst": invoice_gst,

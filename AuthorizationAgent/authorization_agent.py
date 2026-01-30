@@ -15,11 +15,11 @@ SMTP_SERVER = "smtp.gmail.com"
 SMTP_PORT = 587
 IMAP_SERVER = "imap.gmail.com"
 
-SENDER_EMAIL = "oli516537@gmail.com"
-SENDER_PASSWORD = "jods woju uvrr mwkb"
-MANAGER_EMAIL = "sudaroli224@gmail.com"
+SENDER_EMAIL = "slakshmislakshmi50@gmail.com"
+SENDER_PASSWORD = "ewlr mkxa xuwp ltuz"   # Gmail App Password
+MANAGER_EMAIL = "surender.s@geakminds.com"
 
-THRESHOLD = 50000
+THRESHOLD = 2000   # Business rule
 
 # ================= SNOWFLAKE CONFIG =================
 
@@ -38,11 +38,7 @@ SNOWFLAKE_TABLE = "MOCK_INVOICE_DB.PUBLIC.INVOICE_TABLE"
 # ================= UTILS =================
 
 def parse_amount(value):
-    cleaned = str(value).replace(",", "").replace("₹", "").strip()
-    amount = float(cleaned)
-    if amount <= 0:
-        raise ValueError("Invalid invoice amount")
-    return amount
+    return float(str(value).replace(",", "").replace("₹", "").strip())
 
 
 def clean_email_body(raw_body: str) -> str:
@@ -115,9 +111,9 @@ def upsert_invoice_snowflake(
     cur.close()
     conn.close()
 
-    print("📊 Snowflake updated")
+    print(f"📊 Snowflake updated → Invoice={invoice_number}, Status={status}")
 
-# ================= EMAIL SEND (MANAGER) =================
+# ================= EMAIL SEND =================
 
 def send_manager_email(invoice, token):
     msg = EmailMessage()
@@ -126,14 +122,13 @@ def send_manager_email(invoice, token):
     msg["Subject"] = f"Approval Required: Invoice {invoice['invoice_number']}"
 
     msg.set_content(f"""
-APPROVAL REQUEST
+APPROVAL REQUIRED
 
 Invoice Number : {invoice['invoice_number']}
 Vendor         : {invoice['vendor_name']}
 Amount         : {invoice['total_amount']}
 
-Reply with ONLY ONE WORD in the FIRST LINE:
-
+Reply with ONLY ONE WORD:
 APPROVED
 or
 REJECTED
@@ -142,16 +137,17 @@ Approval Token: {token}
 """)
 
     with smtplib.SMTP(SMTP_SERVER, SMTP_PORT) as server:
+        server.set_debuglevel(1)  # DEBUG
         server.starttls()
         server.login(SENDER_EMAIL, SENDER_PASSWORD)
         server.send_message(msg)
 
-    print("📧 Approval email sent to manager")
+    print("📧 Manager approval email SENT")
 
-# ================= EMAIL READ (MANAGER REPLY) =================
+# ================= EMAIL READ =================
 
 def check_manager_reply(token, invoice_number, wait_seconds=300):
-    print("🔍 Waiting for manager reply...")
+    print(f"⏳ Waiting for manager reply → Invoice={invoice_number}")
     end_time = time.time() + wait_seconds
 
     while time.time() < end_time:
@@ -190,8 +186,11 @@ def check_manager_reply(token, invoice_number, wait_seconds=300):
                 mail.logout()
 
                 if first_line.startswith("APPROVED"):
+                    print("✅ Manager APPROVED")
                     return "APPROVED"
+
                 if first_line.startswith("REJECTED"):
+                    print("❌ Manager REJECTED")
                     return "REJECTED"
 
             mail.logout()
@@ -200,111 +199,90 @@ def check_manager_reply(token, invoice_number, wait_seconds=300):
 
         time.sleep(5)
 
-    return None
-
-# ================= COMMUNICATION AGENT (HANDOFF ONLY) =================
-
-def communication_agent(vendor_name, vendor_email, invoice_number, status):
-    """
-    Communication Agent stub.
-    No email / API call yet.
-    Just receives the payload.
-    """
-
-    payload = {
-        "vendor_name": vendor_name,
-        "vendor_email": vendor_email,
-        "invoice_number": invoice_number,
-        "status": status,
-        "timestamp": datetime.utcnow().isoformat()
-    }
-
-    print("📣 Communication Agent called with payload:")
-    print(payload)
+    print("⌛ Manager response TIMEOUT")
+    return "NO_RESPONSE"
 
 # ================= AUTHORIZATION AGENT =================
 
-def authorize_invoice(invoice):
+def authorize_invoice(invoice: dict):
     amount = parse_amount(invoice["total_amount"])
     now = datetime.utcnow().isoformat()
-    vendor_name = invoice["vendor_name"]
 
     # ---------- AUTO APPROVAL ----------
     if amount < THRESHOLD:
-        status = "APPROVED"
-        token = None
-
         upsert_invoice_snowflake(
             invoice["invoice_number"],
-            vendor_name,
+            invoice["vendor_name"],
             invoice["vendor_email"],
             amount,
-            status,
-            token,
+            "APPROVED",
+            None,
             now,
             now
         )
 
-        communication_agent(
-            vendor_name,
-            invoice["vendor_email"],
-            invoice["invoice_number"],
-            status
-        )
+        print("✅ Auto-approved (below threshold)")
 
-        print("✅ Auto-approved and handed to communication agent")
-        return
+        # 🔥 COMMUNICATION PAYLOAD
+        communication_payload = {
+            "invoice_number": invoice["invoice_number"],
+            "vendor_name": invoice["vendor_name"],
+            "vendor_email": invoice["vendor_email"],
+            "status": "APPROVED",
+            "timestamp": datetime.utcnow().isoformat()
+        }
 
-    # ---------- MANAGER APPROVAL ----------
-    status = "PENDING"
+        return {
+            "status": "APPROVED",
+            "reason": "Below threshold",
+            "communication_result": communication_payload   # 🔑 IMPORTANT
+        }
+
+    # ---------- MANUAL APPROVAL ----------
     token = uuid.uuid4().hex.upper()
 
-    send_manager_email(invoice, token)
-
+    # 1️⃣ Save as pending
     upsert_invoice_snowflake(
         invoice["invoice_number"],
-        vendor_name,
+        invoice["vendor_name"],
         invoice["vendor_email"],
         amount,
-        status,
+        "PENDING",
         token,
         now,
         now
     )
 
+    # 2️⃣ SEND EMAIL
+    send_manager_email(invoice, token)
+
+    # 3️⃣ WAIT FOR RESPONSE
     decision = check_manager_reply(token, invoice["invoice_number"])
 
-    if decision:
-        updated_at = datetime.utcnow().isoformat()
+    # 4️⃣ FINAL UPDATE
+    upsert_invoice_snowflake(
+        invoice["invoice_number"],
+        invoice["vendor_name"],
+        invoice["vendor_email"],
+        amount,
+        decision,
+        token,
+        now,
+        datetime.utcnow().isoformat()
+    )
 
-        upsert_invoice_snowflake(
-            invoice["invoice_number"],
-            vendor_name,
-            invoice["vendor_email"],
-            amount,
-            decision,
-            token,
-            now,
-            updated_at
-        )
-
-        communication_agent(
-            vendor_name,
-            invoice["vendor_email"],
-            invoice["invoice_number"],
-            decision
-        )
-
-        print(f"✅ Manager decision: {decision}")
-
-# ================= TEST =================
-
-if __name__ == "__main__":
-    test_invoice = {
-        "invoice_number": "AIN2526003612007",
-        "vendor_name": "PUMA",
-        "vendor_email": "kajasriperiasamy@gmail.com",
-        "total_amount": "89000"
+    # 🔥 COMMUNICATION PAYLOAD
+    communication_payload = {
+        "invoice_number": invoice["invoice_number"],
+        "vendor_name": invoice["vendor_name"],
+        "vendor_email": invoice["vendor_email"],
+        "status": decision,
+        "timestamp": datetime.utcnow().isoformat()
     }
 
-    authorize_invoice(test_invoice)
+    return {
+        "status": decision,
+        "reason": "Manager decision",
+        "communication_result": communication_payload   # 🔑 IMPORTANT
+    }
+

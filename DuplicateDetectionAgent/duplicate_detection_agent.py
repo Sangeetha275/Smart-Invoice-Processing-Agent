@@ -16,7 +16,7 @@ class DuplicateDetectionAgent:
         self.conn = get_snowflake_connection()
 
         self.llm = ChatGroq(
-            model="openai/gpt-oss-20b",
+            model="openai/gpt-oss-120b",
             groq_api_key=os.getenv("GROQ_API_KEY"),
             temperature=0
         )

@@ -1,6 +1,9 @@
 import streamlit as st
 import tempfile
 import os
+import json
+
+from DocumentExtractAgent.invoice_extraction_agent import process_invoice
 from Orchestrator.invoice_workflow import invoice_workflow
 
 st.set_page_config(page_title="AI Invoice Processor", layout="wide")
@@ -18,14 +21,14 @@ if uploaded_file:
         tmp.write(uploaded_file.getbuffer())
         file_path = tmp.name
 
-    with st.spinner("Processing invoice using AI agents..."):
-        result = invoice_workflow.invoke({
-            "file_path": file_path
-        })
+    # ---------------- STEP 1: EXTRACTION ONLY ----------------
+    with st.spinner("Extracting invoice..."):
+        extracted = process_invoice(file_path)
 
-    # -------------------- MANDATORY VENDOR EMAIL --------------------
-    extracted = result["extracted_invoice"]
+    if isinstance(extracted, str):
+        extracted = json.loads(extracted)
 
+    # ---------------- STEP 2: ENSURE VENDOR EMAIL ----------------
     if not extracted.get("vendor_email"):
         st.warning("⚠️ Vendor email not found in invoice")
 
@@ -35,20 +38,35 @@ if uploaded_file:
         )
 
         if not vendor_email:
-            st.info("Please provide vendor email to continue processing.")
             st.stop()
 
-        # Inject email back into extracted invoice
         extracted["vendor_email"] = vendor_email
 
+    st.success("✅ Mandatory data captured. Running full workflow.")
+
+    # ---------------- STEP 3: RUN FULL WORKFLOW ----------------
+    with st.spinner("Running duplicate, validation & authorization agents..."):
+        result = invoice_workflow.invoke({
+            "file_path": file_path,
+            "extracted_invoice": extracted
+        })
+
     # -------------------- TABS --------------------
-    tab1, tab2, tab3 = st.tabs(
-        ["📄 Extracted Invoice", "🔍 Duplicate Check", "✅ GST Validation"]
+    tab1, tab2, tab3, tab4, tab5 = st.tabs(
+        [
+            "📄 Extracted Invoice",
+            "🔍 Duplicate Check",
+            "✅ GST Validation",
+            "🧠 Authorization",
+            "📣 Communication"
+        ]
     )
 
+    # ---------------- TAB 1 ----------------
     with tab1:
-        st.json(extracted)
+        st.json(result["extracted_invoice"])
 
+    # ---------------- TAB 2 ----------------
     with tab2:
         dup = result["duplicate_result"]
         if dup["is_duplicate"]:
@@ -59,8 +77,55 @@ if uploaded_file:
             st.success("✅ No duplicate found")
             st.write(f"Confidence: {dup['confidence']}")
 
+    # ---------------- TAB 3 ----------------
     with tab3:
         if result.get("validation_result"):
             st.json(result["validation_result"])
         else:
-            st.info("Validation skipped due to duplicate invoice")
+            st.info("Validation skipped")
+
+    # ---------------- TAB 4 ----------------
+    with tab4:
+        auth = result.get("authorization_result")
+        if auth:
+            st.success("Authorization executed")
+            st.json(auth)
+        else:
+            st.info("Authorization not executed")
+
+    # ---------------- TAB 5 (NEW) ----------------
+    with tab5:
+        st.subheader("📣 Communication Agent Output")
+
+        auth = result.get("authorization_result")
+        comm = result.get("communication_result")
+
+        if not auth:
+            st.info("Workflow not completed yet.")
+            st.stop()
+
+        status = auth.get("status")
+
+        # -------- FINAL DECISION --------
+        st.markdown("### 🧠 Final Decision")
+
+        if status == "APPROVED":
+            st.success("✅ Invoice Approved")
+
+        elif status == "REJECTED":
+            st.error("❌ Invoice Rejected")
+
+        elif status == "PENDING":
+            st.warning("⏳ Awaiting Manager Approval")
+
+        elif status == "NO_RESPONSE":
+            st.warning("⌛ No response from manager within SLA")
+
+        else:
+            st.info(f"Status: {status}")
+
+        st.write(f"**Reason:** {auth.get('reason')}")
+
+        st.divider()
+
+        

@@ -1,0 +1,25 @@
+📧 Manager approval email SENT
+⏳ Waiting for manager reply → Invoice=FAEPKK2200023735
+❌ Manager REJECTED
+📊 Snowflake updated → Invoice=FAEPKK2200023735, Status=REJECTED
+📧 EMAIL SENT SUCCESSFULLY
+{'to': 'vadhanapriyam@gmail.com', 'subject': 'Invoice Rejected – FAEPKK2200023735', 'body': '\nDear Utkrisht Trade Solutions Pvt Ltd,\n \nYour invoice FAEPKK2200023735 dated 2021-08-29 has been rejected.\n \nReason:\nManager decision\n \nPlease correct and resubmit the invoice.\n \nRegards,\nAccounts Payable Team\n', 'status': 'Email Sent'}
+  Stopping...
+⌛ Manager response TIMEOUT
+📊 Snowflake updated → Invoice=FAEPKK2200023735, Status=NO_RESPONSE
+❌ EMAIL FAILED
+'builtins.NoneType'
+  Stopping...
+Exception ignored while joining a thread in _thread._shutdown():
+Traceback (most recent call last):
+  File "C:\Users\SurenderS\AppData\Roaming\Python\Python314\site-packages\streamlit\web\bootstrap.py", line 43, in signal_handler
+    server.stop()
+  File "C:\Users\SurenderS\AppData\Roaming\Python\Python314\site-packages\streamlit\web\server\server.py", line 535, in stop
+    self._runtime.stop()
+  File "C:\Users\SurenderS\AppData\Roaming\Python\Python314\site-packages\streamlit\runtime\runtime.py", line 355, in stop
+    async_objs.eventloop.call_soon_threadsafe(stop_on_eventloop)
+  File "C:\Python314\Lib\asyncio\base_events.py", line 872, in call_soon_threadsafe
+    self._check_closed()
+  File "C:\Python314\Lib\asyncio\base_events.py", line 550, in _check_closed
+    raise RuntimeError('Event loop is closed')
+RuntimeError: Event loop is closed

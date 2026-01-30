@@ -13,7 +13,7 @@ pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tessera
 
 # -------------------- LLM --------------------
 llm = ChatGroq(
-    model="openai/gpt-oss-20b",
+    model="openai/gpt-oss-120b",
     groq_api_key=os.getenv("GROQ_API_KEY"),
     temperature=0
 )
@@ -161,7 +161,7 @@ Return ONLY a JSON object matching this schema:
   "product_name": ""
 }}
 
-Extract the key invoice details from the following text in JSON format: {text}, from the {result} extract mainly from the llm_check json key and check its gst number,pan,invoice no from the other keys whether the keys are correct and  fetch these details only invoice number, vendor name, invoice date,  total amount, GST number, PAN number, vendor address, vendor email,product name, vendor name fetch these details alone know
+Extract the key invoice details from the following text in JSON format: {text}, from the {result} extract mainly from the llm_check json key and check its gst number,pan,invoice no from the other keys whether the keys are correct and  fetch these details only invoice number, vendor name, invoice date,  total amount, GST number, PAN number, vendor address, vendor email,product name, vendor name fetch these details alone know and invoice date should be in this format '2026-01-02'
 """
 ).content.strip()
     
